@@ -5,6 +5,8 @@
 #include <fstream>
 #include <sstream>
 #include <queue>
+#include <array>
+#include <algorithm>
 
 using namespace std;
 void lectura(vector<int> doctors_schedule_ref[5], int &M_maquinas_o, int &N_pacientes_o, int &D_doctores_o, int &P_r_o, int &P_p_o, int &P_u_o);
@@ -16,7 +18,16 @@ void PList(vector<int> &L_pacientes, int P_u, int P_p, int P_r);
 void maquina_queue(queue<int> &Q_Maq, int M_maquinas);
 void init_zeros(int matrix[][20*16], int N);
 void clear(queue<int> &q );
-void Prettywrite(int schedule_pac_doctor[][20*16], int schedule_pac_machine[][20*16], int N_pacientes);
+void Prettywrite(int** schedule_pac_doctor, int** schedule_pac_machine, int N_pacientes, int n_file);
+// Tabu search functions:
+bool check_tabu(queue<int> Tabu_list, int forbidden_i);
+int**  movement(int** S_c, int i, int U, int P, int R) ;
+int f_ev(int** sol_d, int** sol_m, int N_pac);
+int best_N(int** local_best_d, int** local_best_m, int** S_c, int** S_m, queue<int> &Tabu_list, int U, int P, int R);
+void update_tabu_list (queue<int> &Tabu_list, int forbidden_movement, int max_size);
+void Tabu(int** solution_doctor, int **solution_machine, int max_size, int U, int P, int R, int stop_criterion);
+int** create2DArray(unsigned height, unsigned width);
+int** copy2DArray(int** array1, int** array2,int N, int M);
 
 int main() {
     int M_maquinas=0; int N_pacientes=0; int D_doctores=0; 
@@ -30,10 +41,8 @@ int main() {
     int days = 20; // 4semanas X 5 días
     int bloques = 16; //30 min each one
     
-    int schedule_pac_doctor[N_pacientes][20*16];
-    int schedule_pac_machine[N_pacientes][20*16];
-    init_zeros(schedule_pac_doctor, N_pacientes);
-    init_zeros(schedule_pac_machine, N_pacientes);
+    int **schedule_pac_doctor = create2DArray(N_pacientes, 20*16);
+    int **schedule_pac_machine = create2DArray(N_pacientes, 20*16);
     
     vector<int> L_pacientes;
 
@@ -75,7 +84,11 @@ int main() {
         }
     }
     
-    Prettywrite(schedule_pac_doctor, schedule_pac_machine, N_pacientes);
+    Prettywrite(schedule_pac_doctor, schedule_pac_machine, N_pacientes, 1);
+    int max_size = 30;
+    int stop_criterion = 5000;
+    Tabu(schedule_pac_doctor, schedule_pac_machine, max_size, P_u,P_p,P_r, stop_criterion);
+    Prettywrite(schedule_pac_doctor, schedule_pac_machine, N_pacientes, 2);
     return 0;
 }
 
@@ -87,6 +100,32 @@ void init_zeros(int matrix[][20*16], int N) {
             matrix[i][j]=0;
         }  
     }
+}
+int** copy2DArray(int** array1, int** array2,int N, int M) {
+    for (size_t i = 0; i < N; i++)
+    {
+        for (size_t j = 0; j < M; j++)
+        {
+            array1[i][j] = array2[i][j];
+        } 
+    }
+    return array1;
+}
+int** create2DArray(unsigned height, unsigned width) {
+    int** array2D = 0;
+    array2D = new int*[height];
+
+    for (int h = 0; h < height; h++)
+    {
+        array2D[h] = new int[width];
+
+        for (int w = 0; w < width; w++)
+        {
+                array2D[h][w] = 0;
+        }
+    }
+
+    return array2D;
 }
 
 void doctor_queue(queue<int> &Q_doctor, vector<int> &doctors_schedule_ref, int bloque) {
@@ -108,7 +147,6 @@ void doctor_queue(queue<int> &Q_doctor, vector<int> &doctors_schedule_ref, int b
    }
 
 }
-
 void clear(queue<int> &q ) {
    queue<int> empty;
    swap( q, empty );
@@ -175,10 +213,10 @@ void write(int schedule_pac_doctor[][20*16], int schedule_pac_machine[][20*16], 
     }
     myfile.close();
 }
-
-void Prettywrite(int schedule_pac_doctor[][20*16], int schedule_pac_machine[][20*16], int N_pacientes) {
+void Prettywrite(int **schedule_pac_doctor, int **schedule_pac_machine, int N_pacientes, int n_file) {
+    auto s = to_string(n_file);
     ofstream myfile;
-    myfile.open("output3");
+    myfile.open("output3-"+s);
     for (size_t day = 0; day < 20; day++)
     {    
         myfile << "           |                                          Day"<< day+1 <<"                                                       |\n";
@@ -200,7 +238,7 @@ void lectura(vector<int> doctors_schedule_ref[5], int &M_maquinas_o, int &N_paci
     int M_maquinas=0; int D_doctores=0; ; int N_pacientes=0;
     int Lun;int Ma;int Mie;int Jue;int Vie;
     int P_r=0; int P_p=0; int P_u=0;
-    archivo.open("Caso4", ios::in);
+    archivo.open("Caso1", ios::in);
     if(archivo.fail()){
         cout<<"NO se pudo"<<endl;
         exit(1);
@@ -226,8 +264,6 @@ void lectura(vector<int> doctors_schedule_ref[5], int &M_maquinas_o, int &N_paci
     P_r_o=P_r; P_p_o= P_p; P_u_o=P_u;
     archivo.close();
 }
-
-
 void DList(vector<int> doctors_schedule[5], int Lun, int Ma, int Mie, int Jue, int Vie) {
     doctors_schedule[0].push_back(Lun);
     doctors_schedule[1].push_back(Ma);
@@ -237,113 +273,120 @@ void DList(vector<int> doctors_schedule[5], int Lun, int Ma, int Mie, int Jue, i
 }
 
 
-
-
-void movement(vector<int[][20*16]> neigborhood, int S_c[][20*16],queue<int> &Tabu_list, int U, int P, int R) {
-        for (size_t i = 0; i < U+P+R; i++)
-        {
-            if (i in list(Tabu_list.queue)) {continue;}
-
-            // S_c_aux = deepcopy(S_c) CHECAR ESTO
-            int S_c_aux[U+P+R][20*16];
-            int aux[20*16];
-
-            S_c_aux = S_c; // hace un deep copy
-            aux = S_c_aux[i];
-            if(i == U-1) {
-                S_c_aux[i] = S_c_aux[0];
-                S_c_aux[0] = aux;
-                neigborhood.push_back(S_c_aux)
-            } else if(i == U+P-1) {
-                S_c_aux[i] = S_c_aux[U];
-                S_c_aux[U] = aux;
-                neigborhood.push_back(S_c_aux)
-            } else if(i == U+P+R-1) {
-                S_c_aux[i] = S_c_aux[P+U];
-                S_c_aux[P+U] = aux;
-                neigborhood.push_back(S_c_aux)
-            } else {
-                S_c_aux[i] = S_c_aux[i+1];
-                S_c_aux[i+1] = aux;
-                neigborhood.push_back(S_c_aux);
-            }
+bool check_tabu(queue<int> Tabu_list, int forbidden_i) {
+    for (size_t i = 0; i < Tabu_list.size(); i++) {   
+        if(i==Tabu_list.front()) {
+            return true;
         }
+        Tabu_list.pop();
     }
+    return false;
+}
 
-int f_ev(int sol_d[][20*16], int sol_m[][20*16], int N_pac) {
+int**  movement(int **S_c, int i, int U, int P, int R) {
+    int** S_c_aux = create2DArray(U+P+R, 20*16);
+    int aux[20*16];
+    
+    S_c_aux = copy2DArray(S_c_aux, S_c, U+P+R, 20*16);
+    copy(&S_c_aux[i][0], &S_c_aux[i][0]+(20*16),&aux[0]);
+    if(i == U-1) {
+        copy(&S_c_aux[0][0], &S_c_aux[0][0]+(20*16),S_c_aux[i]); //  S_c_aux[i] = S_c_aux[0];
+        copy(&aux[0], &aux[0]+(20*16),S_c_aux[0]); //  S_c_aux[0] = aux;
+        return S_c_aux;
+        
+    } else if(i == U+P-1) {
+        copy(&S_c_aux[U][0], &S_c_aux[U][0]+(20*16),S_c_aux[i]);
+        copy(&aux[0], &aux[0]+(20*16),S_c_aux[U]);
+        return S_c_aux;
+    } else if(i == U+P+R-1) {
+        copy(&S_c_aux[P+U][0], &S_c_aux[P+U][0]+(20*16),S_c_aux[i]);
+        copy(&aux[0], &aux[0]+(20*16),S_c_aux[P+U]);
+        return S_c_aux;
+    } else {
+        copy(&S_c_aux[i][0], &S_c_aux[i][0]+(20*16),S_c_aux[i+1]);
+        copy(&aux[0], &aux[0]+(20*16),S_c_aux[i+1]);
+        return S_c_aux;
+    }
+}
+
+int f_ev(int** sol_d, int** sol_m, int N_pac) {
         int same_doctor = 0;
         int same_machine = 0;
         for (size_t index_pac = 0; index_pac < N_pac; index_pac++) { // sol_d
             vector<int> doctores_pac;
             vector<int> machines_pac;
-            for (size_t index_doc = 0; index_pac < N_pac; index_pac++) { // sol_d[index_pac]
+            for (size_t index_doc = 0; index_doc < N_pac; index_doc++) { // sol_d[index_pac]
                 if (index_doc != 0) {
-                    if (doctor in doctores_pac) { same_doctor = same_doctor +1};
-                    if (sol_m[index_pac][index_doc] in machines_pac) { same_machine = same_machine +1};
-                    doctores_pac.push_back(doctor);
+                    if (binary_search(doctores_pac.begin(), doctores_pac.end(), sol_d[index_pac][index_doc])) { same_doctor = same_doctor +1;};
+                    if (binary_search(machines_pac.begin(), machines_pac.end(), sol_m[index_pac][index_doc])) { same_machine = same_machine +1;};
+                    doctores_pac.push_back(sol_d[index_pac][index_doc]);
                     machines_pac.push_back(sol_m[index_pac][index_doc]);
-                    continue //#in C++ skip to another daylight
+                    continue; //#in C++ skip to another daylight
                 }
             }
         }
-        return same_doctor+same_machine
+        return same_doctor+same_machine;
 }
 
-void best_N(int S_c[][20*16], int S_m[][20*16], queue<int> &Tabu_list, int U, int P, int R) {
-    int local_best_d[][20*16];
-    int local_best_m[][20*16];
-    vector<int[][20*16]> neigborhood_d;
-    vector<int[][20*16]> neigborhood_m;
-    movement(neigborhood_d, S_c, Tabu_list, U,P,R);
-    movement(neigborhood_m, S_c, Tabu_list, U,P,R);
-
-    local_best_d = neigborhood_d[0];
-    local_best_m = neigborhood_m[0];
+int best_N(int **local_best_d, int **local_best_m, int **S_c, int **S_m, queue<int> &Tabu_list, int U, int P, int R) {
+    int** neigbor_d = 0; neigbor_d = new int*[20*16];
+    int** neigbor_m = 0; neigbor_m = new int*[20*16];
+    // vector<int[][20*16]> neigborhood_m;
     int forbidden_movement = 0;
-    for (size_t index = 0; index < neigborhood_d.size(); index++){
-        if (f_ev(neigborhood_d[index], neigborhood_m[index], U+P+R) > f_ev(local_best_d, neigborhood_m[index], U+P+R)){
-            local_best_d = neigborhood_d[index];
-            local_best_m = neigborhood_m[index];
+    for (size_t index = 0; index < (U+P+R); index++){
+        if (check_tabu(Tabu_list, index)) {continue;}
+        neigbor_d = movement(S_c, index, U,P,R);
+        neigbor_m = movement(S_c, index, U,P,R);
+        if (f_ev(neigbor_d, neigbor_m, U+P+R) > f_ev(local_best_d, local_best_m, U+P+R)){
+            for (size_t pac = 0; pac < (U+P+R); pac++) {
+                copy(&neigbor_d[pac][0], &neigbor_d[pac][0]+(20*16), local_best_d[pac]);
+                copy(&neigbor_m[pac][0], &neigbor_m[pac][0]+(20*16), local_best_m[pac]);
+            }
             forbidden_movement = index;
         }
     }
-    return local_best_d, local_best_m, forbidden_movement
+    return forbidden_movement;
 }
 
-void update_tabu_list (queue<int> &Tabu_list, int forbidden_movement) {
-        if(not Tabu_list.full(){
+void update_tabu_list (queue<int> &Tabu_list, int forbidden_movement, int max_size) {
+        if(Tabu_list.size() != max_size) {
             Tabu_list.push(forbidden_movement);
         } else {
-            cout << " Tabu list front elemnt " << Tabu_list.front() << endl;
-            Q_paciente.pop();
+            // cout << " Tabu list front elemnt " << Tabu_list.front() << endl;
+            Tabu_list.pop();
             Tabu_list.push(forbidden_movement);
         }
 }
 
-void Tabu(int S_c[][20*16], int S_m[][20*16], int max_size, int U, int P, int R, int stop_criterion) {
+void Tabu(int **solution_doctor, int **solution_machine, int max_size, int U, int P, int R, int stop_criterion) {
+
     queue<int> Tabu_list; // DEFINIR MAX SIZE
-    int S_best_d[U+P+R][20*16]; int S_best_m[U+P+R][20*16];
-    int sd[U+P+R][20*16]; int sm[U+P+R][20*16];
-    int S_v_d[U+P+R][20*16]; int S_v_m[U+P+R][20*16];
+    int** S_best_d=create2DArray(U+P+R, 20*16); int **S_best_m=create2DArray(U+P+R, 20*16);
+    int** S_v_d=create2DArray(U+P+R, 20*16); int **S_v_m=create2DArray(U+P+R, 20*16);
     int forbidden_movement;
-
-    S_best_d = S_c_d;
-    S_best_m = S_c_m;
-
-    sd, sm,_= best_N(S_c_d, S_c_m, Tabu_list, U,P,R);
+    cout << S_best_m[0][2] << endl;
+    cout << S_best_d[0][9] << endl;
+    
+    cout << "best was found it! " << f_ev(solution_doctor, solution_machine, U+P+R) << endl;
+    for (size_t pac = 0; pac < U+P+R; pac++){
+        copy(&solution_doctor[pac][0], &solution_doctor[pac][0]+(20*16), S_best_d[pac]);
+        copy(&solution_machine[pac][0], &solution_machine[pac][0]+(20*16), S_best_m[pac]);
+    }
     int c=0;
-    printf("stop_criterion: ", stop_criterion, "max size: ", max_size);
+    // cout << "stop_criterion: "  << stop_criterion  << " max size: " << max_size << endl;
     while (c!=stop_criterion) {
-        S_v_d, S_v_m, forbidden_movement = best_N(S_c_d, S_c_m, Tabu_list, U,P,R);
-        S_c_d = S_v_d;
-        S_c_m = S_v_m;
-        update_tabu_list(Tabu_list, forbidden_movement);
-        if (f_ev(S_c_d, S_c_m, U,P,R) > f_ev(S_best_d, S_best_m, U,P,R)) {
-            S_best_d = S_c_d;
-            S_best_m = S_c_m;
+        forbidden_movement = best_N(S_v_d, S_v_m, solution_doctor, solution_machine, Tabu_list, U,P,R);
+        solution_doctor = S_v_d;
+        solution_machine = S_v_m;
+        update_tabu_list(Tabu_list, forbidden_movement, max_size);
+        if (f_ev(solution_doctor, solution_machine, U+P+R) > f_ev(S_best_d, S_best_m, U+P+R)) {
+            for (size_t pac = 0; pac < (U+P+R); pac++){
+                copy(&solution_doctor[pac][0], &solution_doctor[pac][0]+(20*16), S_best_d[pac]);
+                copy(&solution_machine[pac][0], &solution_machine[pac][0]+(20*16), S_best_m[pac]);
+            }
+            cout << "best foundit! " << f_ev(solution_doctor, solution_machine, U+P+R) << endl;
         }
         c +=1;
     }
-    printf("c: ", c);
-    return S_best_d, S_best_m;
+    cout  << "c: " <<  c << endl;
 }
